@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NDRF Ultra-Low Latency Disaster Alert & Rescue Network</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet GIS Mapping Engine -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- Top Navbar -->
+    <header class="navbar">
+        <div class="brand">
+            <div class="brand-icon">🌊</div>
+            <div>
+                <div class="brand-title" id="txt-app-title">NDRF DISASTER COMMAND & CITIZEN RESCUE</div>
+                <div class="brand-sub" id="txt-app-sub">Ultra-Low Latency Mesh Pipeline (Bihar • Assam • Nepal)</div>
+            </div>
+        </div>
+
+        <!-- Role Mode Switcher (NDRF Command vs Victim SOS vs Govt Panel) -->
+        <div class="role-switcher-container">
+            <button class="role-btn active" data-role="ndrf" id="btn-role-ndrf">
+                🚤 NDRF Command View
+            </button>
+            <button class="role-btn role-victim" data-role="victim" id="btn-role-victim">
+                📱 Victim SOS Portal
+            </button>
+            <button class="role-btn role-govt" data-role="govt" id="btn-role-govt">
+                🏛️ Govt Authority Panel
+            </button>
+        </div>
+
+        <div class="nav-controls">
+            <!-- Multilingual i18n Selector -->
+            <select class="lang-select-box" id="lang-select" title="Select Regional Language">
+                <option value="en">🌐 English</option>
+                <option value="hi">🌐 हिन्दी (Hindi)</option>
+                <option value="as">🌐 অসমীয়া (Assamese)</option>
+                <option value="ne">🌐 नेपाली (Nepali)</option>
+            </select>
+
+            <div class="nav-badge" id="status-badge">
+                <span class="pulse-dot"></span>
+                <span id="system-status-text">SYSTEM OPERATIONAL</span>
+            </div>
+
+            <button class="btn" id="btn-broadcast-modal" title="Compose Mass Emergency Cell Broadcast">
+                📢 Cell Broadcast
+            </button>
+
+            <button class="btn" id="btn-siren-toggle" title="Toggle Alarm Siren">
+                🔊 Siren: ON
+            </button>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs Bar (Visible in NDRF Command View) -->
+    <nav class="tabs-bar" id="ndrf-tabs-nav">
+        <button class="tab-btn active" data-target="view-map">
+            🗺️ Tactical GIS & SOS Map
+        </button>
+        <button class="tab-btn" data-target="view-triage">
+            🚨 Live SOS Triage Queue
+        </button>
+        <button class="tab-btn" data-target="view-sensors">
+            📊 River Basin Sensor Matrix
+        </button>
+        <button class="tab-btn" data-target="view-mesh">
+            📱 Bluetooth & Wi-Fi Mesh Topology
+        </button>
+        <button class="tab-btn" data-target="view-rescue">
+            🚤 NDRF Rescue Squads & Camps
+        </button>
+    </nav>
+
+    <!-- Emergency Breach Alert Banner -->
+    <div id="alert-banner">
+        ⚠️ EMERGENCY FLOOD WARNING: RIVER LEVEL BREACHED DANGER THRESHOLD! CELL BROADCAST & RESCUE DISPATCH ACTIVATED
+    </div>
+
+    <!-- MAIN VIEW 1: Tactical GIS Map & Live Telemetry (NDRF Mode) -->
+    <main class="app-view active" id="view-map">
+        
+        <!-- Left: Map Component -->
+        <div class="map-container">
+            <div id="map"></div>
+
+            <!-- Map HUD Overlay -->
+            <div class="map-hud-overlay">
+                <div class="hud-glass-card">
+                    <div class="hud-label" id="txt-hud-node-lbl">Active Basin Station</div>
+                    <div class="hud-value-large" style="font-size: 1.15rem;" id="hud-node-name">KOSI_RIVER_NODE_04</div>
+                    <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px;" id="hud-node-location">Location: Kosi Bridge, Supaul (Bihar)</div>
+                </div>
+
+                <div class="hud-glass-card">
+                    <div class="hud-label" id="txt-hud-water-lbl">Current Water Level</div>
+                    <div class="hud-value-large" id="hud-water-val">12.45 m</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Danger Threshold: 15.00 m</div>
+                </div>
+            </div>
+
+            <!-- Map Layer Switcher Floating Bar -->
+            <div class="map-layer-switcher">
+                <button class="layer-btn active" id="layer-dark">🌑 Dark GIS</button>
+                <button class="layer-btn" id="layer-satellite">🛰️ Satellite</button>
+                <button class="layer-btn" id="layer-rain">🌧️ Rain Radar</button>
+                <button class="layer-btn" id="layer-heat">🔴 Flood Inundation</button>
+            </div>
+        </div>
+
+        <!-- Right: Control Room Telemetry Console -->
+        <aside class="sidebar-console">
+            <div class="sidebar-title-bar">
+                <h3>Tactical Control Room</h3>
+                <span style="font-size: 0.72rem; color: var(--accent-cyan);" id="ws-status">● WS Connected</span>
+            </div>
+
+            <!-- River Basin Selector -->
+            <div class="panel-block">
+                <div class="block-title">
+                    <span>Select River Basin Monitoring Station</span>
+                </div>
+                <div class="sensor-switcher-grid">
+                    <div class="sensor-chip active" data-sensor="KOSI_RIVER_NODE_04">
+                        <div class="chip-id">KOSI (Supaul)</div>
+                        <div class="chip-lvl" id="chip-lvl-kosi">12.45 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="GANDAK_VALMIKI_02">
+                        <div class="chip-id">GANDAK (Valmiki)</div>
+                        <div class="chip-lvl" id="chip-lvl-gandak">13.80 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="BRAHMAPUTRA_KAZI_01">
+                        <div class="chip-id">BRAHMAPUTRA (Assam)</div>
+                        <div class="chip-lvl" id="chip-lvl-brahma">14.20 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="KOSHI_NEPAL_03">
+                        <div class="chip-id">KOSHI (Nepal)</div>
+                        <div class="chip-lvl" id="chip-lvl-nepal">11.90 m</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Telemetry Metrics Grid -->
+            <div class="panel-block">
+                <div class="block-title">
+                    <span>IoT Sensor Telemetry Stream</span>
+                    <span id="telemetry-timestamp" style="font-family: var(--font-mono); font-size: 0.68rem;">--:--:--</span>
+                </div>
+                
+                <div class="metrics-grid-4">
+                    <div class="stat-card">
+                        <div class="stat-card-label">Water Height</div>
+                        <div class="stat-card-val" id="stat-water" style="color: var(--accent-cyan);">12.45 m</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Flow Discharge</div>
+                        <div class="stat-card-val" id="stat-flow">490 m³/s</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Rainfall Rate</div>
+                        <div class="stat-card-val" id="stat-rain">34.2 mm/h</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Battery Level</div>
+                        <div class="stat-card-val" id="stat-battery" style="color: var(--accent-green);">98.5 %</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Disaster Simulation Actions -->
+            <div class="panel-block">
+                <div class="block-title">Emergency Command Actions</div>
+                <div class="controls-stack">
+                    <button class="btn btn-danger" id="btn-simulate-surge">
+                        🌊 Trigger Flash Flood Surge (15.5m Breach)
+                    </button>
+                    
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn" id="btn-ble-ping" style="flex: 1;">
+                            📱 Send BLE SOS Ping
+                        </button>
+                        <button class="btn btn-green" id="btn-dispatch-boat" style="flex: 1;">
+                            🚤 Dispatch NDRF Boat
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audit Log Ticker -->
+            <div class="panel-block" style="flex: 1; border-bottom: none;">
+                <div class="block-title">Sub-Second Audit Log</div>
+                <div class="log-stream" id="log-stream">
+                    <div class="log-item info">[INIT] NDRF Command Center & SOS Relay Network Initialized.</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- VIEW 2: VICTIM LOCAL EMERGENCY MOBILE PORTAL -->
+    <main class="app-view" id="view-victim">
+        <div class="victim-container">
+            <div class="victim-sos-card">
+                <div style="font-size: 2.2rem;">🆘</div>
+                <h2 style="font-family: var(--font-heading); font-size: 1.4rem; color: #ffffff; margin-top: 4px;" id="txt-victim-heading">EMERGENCY RESCUE REQUEST</h2>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;" id="txt-victim-sub">
+                    Send immediate distress signal to NDRF squads & nearby local mesh devices without cellular internet.
+                </p>
+
+                <!-- BIG RED SOS BUTTON -->
+                <button class="big-sos-btn" id="btn-victim-sos">
+                    🚨 BROADCAST SOS DISTRESS SIGNAL
+                </button>
+
+                <!-- Victim Triage Form -->
+                <div class="form-group-grid">
+                    <div>
+                        <label class="form-label" id="lbl-triage-condition">Emergency Condition</label>
+                        <select class="form-control" id="victim-triage">
+                            <option value="ROOF_TRAPPED" selected>🔴 Trapped on Roof / High Ground</option>
+                            <option value="WATER_RISING">🔴 Water Level Rising Rapidly inside House</option>
+                            <option value="INJURED_MEDICAL">🔴 Injured / Medical Emergency</option>
+                            <option value="ELDERLY_CHILDREN">🟡 Elderly / Infants Present (Need Evacuation)</option>
+                            <option value="FOOD_WATER_SHORT">🟢 Safe for Now / Need Food & Drinking Water</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="form-label" id="lbl-people-count">Number of Trapped Victims</label>
+                        <input type="number" class="form-control" id="victim-count" value="4" min="1" max="50">
+                    </div>
+                </div>
+
+                <div style="margin-top: 10px; text-align: left;">
+                    <label class="form-label" id="lbl-landmark">Landmark / House Description (Optional)</label>
+                    <input type="text" class="form-control" id="victim-landmark" placeholder="e.g. Near Supaul High School, Blue Metal Roof">
+                </div>
+
+                <div style="margin-top: 10px; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);" id="victim-gps-status">GPS Coordinates: Fetching...</span>
+                    <button class="btn btn-cyan" id="btn-victim-gps" style="padding: 4px 10px; font-size: 0.75rem;">📍 Refresh GPS</button>
+                </div>
+
+                <!-- Mesh Network Connection Pill -->
+                <div class="mesh-status-pill">
+                    <div>
+                        <strong>📡 Offline Mesh Relay Active</strong>
+                        <div style="font-size: 0.7rem; color: var(--text-secondary);" id="txt-mesh-desc">Uses Web Bluetooth & Local Wi-Fi P2P to relay distress data when network towers fail.</div>
+                    </div>
+                    <button class="btn" id="btn-pair-ble" style="font-size: 0.72rem; padding: 4px 8px;">Pair BLE Device</button>
+                </div>
+
+                <!-- Emergency Beacon Toolkit -->
+                <div class="beacon-controls">
+                    <button class="beacon-btn" id="btn-whistle">
+                        📢 Sound Emergency Whistle
+                    </button>
+                    <button class="beacon-btn" id="btn-flashlight">
+                        🔦 Flashlight Screen Beacon
+                    </button>
+                </div>
+            </div>
+
+            <!-- Multilingual Flood Survival Instructions -->
+            <div class="survival-guide-card">
+                <h3 style="font-family: var(--font-heading); font-size: 1rem; color: var(--accent-cyan);" id="txt-guide-title">
+                    💡 Flood Survival Guidelines (Bihar, Assam, Nepal)
+                </h3>
+                
+                <div id="guide-steps-list">
+                    <div class="guide-step" id="step-1">
+                        <strong>1. Move to High Ground:</strong> Move immediately to the roof or highest embankment. Avoid standing water near electrical poles.
+                    </div>
+                    <div class="guide-step" id="step-2">
+                        <strong>2. Keep Emergency Signal On:</strong> Keep your phone screen beacon or audio whistle playing to help NDRF speedboats locate you in fog or darkness.
+                    </div>
+                    <div class="guide-step" id="step-3">
+                        <strong>3. Peer Mesh Transmission:</strong> Stay within range of adjacent phones — your SOS alert will relay automatically tab-to-tab over local Bluetooth/Wi-Fi.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- VIEW 3: GOVERNMENT & SDMA AUTHORITY PANEL -->
+    <main class="app-view" id="view-govt">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 style="font-family: var(--font-heading); font-size: 1.3rem;">🏛️ National & State Disaster Management Authority (SDMA / NDMA) Dashboard</h2>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
+                    Inter-Agency Executive Overview & Rapid Rescue Dispatch Telemetry (Bihar, Assam, Nepal Floods)
+                </p>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-cyan" id="btn-export-govt-csv">📥 Export Situation Report (CSV)</button>
+                <button class="btn" id="btn-export-govt-json">📥 Export JSON Digest</button>
+            </div>
+        </div>
+
+        <!-- High Level Metrics Matrix -->
+        <div class="govt-metrics-grid">
+            <div class="govt-stat-box red-indicator">
+                <div class="govt-stat-label">Total Affected Population</div>
+                <div class="govt-stat-val">1,48,500</div>
+                <div class="govt-stat-sub">Across Supaul, Kaziranga & Saptari</div>
+            </div>
+            <div class="govt-stat-box green-indicator">
+                <div class="govt-stat-label">Total Victims Rescued</div>
+                <div class="govt-stat-val" id="govt-rescued-count">3,420</div>
+                <div class="govt-stat-sub">By NDRF & Army Boats</div>
+            </div>
+            <div class="govt-stat-box red-indicator">
+                <div class="govt-stat-label">Critical Red SOS Active</div>
+                <div class="govt-stat-val" style="color: var(--accent-red);" id="govt-red-sos">14</div>
+                <div class="govt-stat-sub">Roof Trapped & Medical Priority</div>
+            </div>
+            <div class="govt-stat-box amber-indicator">
+                <div class="govt-stat-label">Barrage Water Discharge</div>
+                <div class="govt-stat-val" style="color: var(--accent-amber);">3,95,000</div>
+                <div class="govt-stat-sub">Cusecs at Kosi & Gandak Gates</div>
+            </div>
+            <div class="govt-stat-box green-indicator">
+                <div class="govt-stat-label">Relief Camps Active</div>
+                <div class="govt-stat-val">24 Camps</div>
+                <div class="govt-stat-sub">Capacity: 18,500 evacuees</div>
+            </div>
+        </div>
+
+        <!-- Regional Flood Inundation & River Basin Status -->
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <h2>Regional Flood Risk & Barrage Discharge Matrix</h2>
+            </div>
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Region / River Basin</th>
+                        <th>State / Country</th>
+                        <th>Current Water Level</th>
+                        <th>Danger Threshold</th>
+                        <th>Discharge Rate</th>
+                        <th>Affected Districts</th>
+                        <th>Status Risk</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Kosi River (Supaul Sector)</strong></td>
+                        <td>Bihar, India</td>
+                        <td>12.45 m</td>
+                        <td>15.00 m</td>
+                        <td>4,90,000 cusecs</td>
+                        <td>Supaul, Saharsa, Madhepura</td>
+                        <td><span class="status-tag warning">HIGH WATCH</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Gandak River (Valmiki Nagar)</strong></td>
+                        <td>Bihar, India</td>
+                        <td>13.80 m</td>
+                        <td>14.50 m</td>
+                        <td>3,20,000 cusecs</td>
+                        <td>West Champaran, Gopalganj</td>
+                        <td><span class="status-tag critical">CRITICAL SURGE</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Brahmaputra River (Kaziranga)</strong></td>
+                        <td>Assam, India</td>
+                        <td>14.20 m</td>
+                        <td>14.00 m</td>
+                        <td>6,10,000 cusecs</td>
+                        <td>Nagaon, Golaghat, Kamrup</td>
+                        <td><span class="status-tag critical">OVERFLOW BREACH</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Koshi & Sun Kosi Basin</strong></td>
+                        <td>Province 1, Nepal</td>
+                        <td>11.90 m</td>
+                        <td>13.50 m</td>
+                        <td>2,80,000 cusecs</td>
+                        <td>Saptari, Sunsari</td>
+                        <td><span class="status-tag normal">STABLE MONITORING</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- VIEW 4: LIVE SOS TRIAGE QUEUE (NDRF Mode) -->
+    <main class="app-view" id="view-triage">
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <div>
+                    <h2>🚨 Live Victim SOS Distress Incident Queue</h2>
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">
+                        Sorted dynamically by Triage Priority Score (Red: Roof Trapped/Injured, Yellow: Medical/Elderly, Green: Supply Need).
+                    </p>
+                </div>
+                <button class="btn btn-danger" id="btn-purge-resolved">Clear Resolved Incidents</button>
+            </div>
+
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>SOS ID</th>
+                        <th>Triage Level</th>
+                        <th>Location Coordinates</th>
+                        <th>Landmark / Note</th>
+                        <th>People Trapped</th>
+                        <th>Mesh Hops</th>
+                        <th>Timestamp</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="triage-table-body">
+                    <!-- Dynamic Triage Rows -->
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- VIEW 5: BASIN SENSOR MATRIX -->
+    <main class="app-view" id="view-sensors">
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <div>
+                    <h2>Basin Telemetry Sensor Fleet Management</h2>
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">
+                        Real-time status of ultrasonic water level sensors, telemetry flow meters across river basins.
+                    </p>
+                </div>
+                <button class="btn btn-cyan" id="btn-export-csv">📥 Export Sensor Data (CSV)</button>
+            </div>
+
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Sensor ID</th>
+                        <th>River Basin</th>
+                        <th>Latitude / Longitude</th>
+                        <th>Water Level</th>
+                        <th>Critical Threshold</th>
+                        <th>Flow Rate</th>
+                        <th>Rainfall</th>
+                        <th>Battery %</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="sensor-table-body">
+                    <!-- Dynamic Rows -->
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- VIEW 6: BLE MESH TOPOLOGY -->
+    <main class="app-view" id="view-mesh">
+        <div class="mesh-canvas-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 style="font-family: var(--font-heading); font-size: 1.15rem;">Offline BLE & Local Wi-Fi Mesh Graph Visualizer</h2>
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">
+                        Simulates multi-hop peer-to-peer 16-byte binary frame routing when cellular towers fail.
+                    </p>
+                </div>
+                <button class="btn btn-cyan" id="btn-sim-mesh-packet">📡 Relay Sample Mesh Packet</button>
+            </div>
+
+            <canvas class="mesh-topology-canvas" id="mesh-canvas" width="700" height="480"></canvas>
+        </div>
+
+        <aside class="sidebar-console" style="border-radius: 14px; border: 1px solid var(--border-subtle);">
+            <div class="sidebar-title-bar">
+                <h3>Bluetooth & Wi-Fi Mesh Metrics</h3>
+            </div>
+            <div class="panel-block">
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">Active Mesh Nodes</div>
+                    <div class="stat-card-val" style="color: var(--accent-purple);" id="mesh-nodes-count">8 Devices</div>
+                </div>
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">P2P Frame Structure</div>
+                    <div class="stat-card-val">16 Bytes (Packed Binary)</div>
+                </div>
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">Average Mesh Hop Count</div>
+                    <div class="stat-card-val" id="mesh-hop-count">2 Hops</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-label">Gateway Uplink</div>
+                    <div class="stat-card-val" style="color: var(--accent-green);">Satellite Link Active</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- VIEW 7: RESCUE SQUADS -->
+    <main class="app-view" id="view-rescue">
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <h2>NDRF Tactical Rescue Units</h2>
+            </div>
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Unit ID</th>
+                        <th>Type</th>
+                        <th>Assigned Sector</th>
+                        <th>Personnel</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="rescue-table-body">
+                    <tr>
+                        <td>NDRF-BOAT-01</td>
+                        <td>Speedboat Squad</td>
+                        <td>Supaul / Kosi Sector</td>
+                        <td>6 Officers</td>
+                        <td><span class="status-tag normal">ON SCENE</span></td>
+                    </tr>
+                    <tr>
+                        <td>NDRF-HELI-04</td>
+                        <td>Heavy Lift Helicopter</td>
+                        <td>Valmiki Sector</td>
+                        <td>4 Crew</td>
+                        <td><span class="status-tag normal">STANDBY</span></td>
+                    </tr>
+                    <tr>
+                        <td>NDRF-DRONE-09</td>
+                        <td>Recon & Supply Drone</td>
+                        <td>Sitamarhi Sector</td>
+                        <td>2 Operators</td>
+                        <td><span class="status-tag warning">PATROLLING</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <h2>Evacuation Relief Camps Capacity</h2>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 16px;" id="shelters-container">
+                <!-- Dynamic Shelters -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Cell Broadcast Compose Modal -->
+    <div class="modal-overlay" id="broadcast-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>📢 Cell Broadcast Mass Alert Composer (CAP v1.2)</h3>
+                <button class="btn" id="btn-close-modal" style="padding: 4px 10px;">✕</button>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label">Target Geo-Fence Region</label>
+                <select class="form-control" id="modal-radius">
+                    <option value="Supaul, Bihar" selected>Supaul & Kosi River Basin (Bihar)</option>
+                    <option value="Valmiki Nagar, Bihar">Valmiki Nagar & Gandak Basin (Bihar)</option>
+                    <option value="Kaziranga, Assam">Kaziranga & Brahmaputra Valley (Assam)</option>
+                    <option value="Saptari, Nepal">Saptari & Sunsari Region (Nepal)</option>
+                </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label">Alert Severity Level</label>
+                <select class="form-control" id="modal-severity">
+                    <option value="EXTREME" selected>🔴 EXTREME DANGER - IMMEDIATE EVACUATION</option>
+                    <option value="SEVERE">🟡 SEVERE WARNING - HIGH WATER LEVEL BREACH</option>
+                </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label">Emergency Broadcast Message</label>
+                <textarea class="form-control" id="modal-msg" rows="3">EMERGENCY FLOOD WARNING: Kosi & Gandak River levels breached danger threshold! Move to designated high-ground relief camps immediately. NDRF speedboats dispatched.</textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                <button class="btn" id="btn-cancel-modal">Cancel</button>
+                <button class="btn btn-danger" id="btn-send-broadcast">🚀 Dispatch Cell Broadcast SMS/Radio Alert</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App JavaScript Logic -->
+    <script src="app.js"></script>
+</body>
+</html>

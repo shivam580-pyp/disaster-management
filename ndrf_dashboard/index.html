@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NDRF Enterprise Ultra-Low Latency Disaster Alert & Rescue Command Portal</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet GIS Mapping Engine -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- Top Navbar -->
+    <header class="navbar">
+        <div class="brand">
+            <div class="brand-icon">🌊</div>
+            <div>
+                <div class="brand-title">NDRF DISASTER COMMAND CENTER</div>
+                <div class="brand-sub">Sub-Second IoT Early Warning & Rescue Management Pipeline</div>
+            </div>
+        </div>
+
+        <div class="nav-controls">
+            <div class="nav-badge" id="status-badge">
+                <span class="pulse-dot"></span>
+                <span id="system-status-text">SYSTEM OPERATIONAL</span>
+            </div>
+
+            <div class="nav-badge">
+                <span>⏱️ Latency:</span>
+                <strong id="latency-val" style="color: var(--accent-cyan);">0.08s</strong>
+            </div>
+
+            <button class="btn" id="btn-broadcast-modal">
+                📢 Compose Cell Broadcast
+            </button>
+
+            <button class="btn" id="btn-voice-toggle" title="Toggle Voice Alert Speech Generator">
+                🗣️ Voice Alert: ON
+            </button>
+
+            <button class="btn" id="btn-siren-toggle" title="Toggle Dual-Tone Emergency Alarm Siren">
+                🔊 Siren: ON
+            </button>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs Bar -->
+    <nav class="tabs-bar">
+        <button class="tab-btn active" data-target="view-map">
+            🗺️ Tactical GIS Map
+        </button>
+        <button class="tab-btn" data-target="view-sensors">
+            📊 Basin Sensor Fleet & Matrix
+        </button>
+        <button class="tab-btn" data-target="view-mesh">
+            📱 Offline BLE Mesh Topology
+        </button>
+        <button class="tab-btn" data-target="view-rescue">
+            🚤 Rescue Squads & Evacuation Camps
+        </button>
+    </nav>
+
+    <!-- Emergency Breach Alert Banner -->
+    <div id="alert-banner">
+        ⚠️ EMERGENCY FLOOD WARNING: RIVER LEVEL BREACHED DANGER THRESHOLD! CELL BROADCAST & RESCUE DISPATCH ACTIVATED
+    </div>
+
+    <!-- MAIN VIEW 1: Tactical GIS Map & Live Telemetry -->
+    <main class="app-view active" id="view-map">
+        
+        <!-- Left: Map Component -->
+        <div class="map-container">
+            <div id="map"></div>
+
+            <!-- Map HUD Overlay -->
+            <div class="map-hud-overlay">
+                <div class="hud-glass-card">
+                    <div class="hud-label">Active Monitoring Node</div>
+                    <div class="hud-value-large" style="font-size: 1.15rem;" id="hud-node-name">KOSI_RIVER_NODE_04</div>
+                    <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px;" id="hud-node-location">Location: Kosi River Bridge, Supaul</div>
+                </div>
+
+                <div class="hud-glass-card">
+                    <div class="hud-label">Current Water Level</div>
+                    <div class="hud-value-large" id="hud-water-val">12.45 m</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Critical Limit: 15.00 m</div>
+                </div>
+            </div>
+
+            <!-- Map Layer Switcher Floating Bar -->
+            <div class="map-layer-switcher">
+                <button class="layer-btn active" id="layer-dark">🌑 Dark GIS</button>
+                <button class="layer-btn" id="layer-satellite">🛰️ Satellite</button>
+                <button class="layer-btn" id="layer-rain">🌧️ Rain Radar</button>
+                <button class="layer-btn" id="layer-heat">🔴 Risk Radius</button>
+            </div>
+        </div>
+
+        <!-- Right: Control Room Telemetry Console -->
+        <aside class="sidebar-console">
+            <div class="sidebar-title-bar">
+                <h3>Control Room Console</h3>
+                <span style="font-size: 0.72rem; color: var(--accent-cyan);" id="ws-status">● WS Connected</span>
+            </div>
+
+            <!-- Sensor Node Switcher -->
+            <div class="panel-block">
+                <div class="block-title">
+                    <span>Select River Basin Node</span>
+                    <span style="font-size: 0.68rem; color: var(--text-muted);">4 Active Nodes</span>
+                </div>
+                <div class="sensor-switcher-grid">
+                    <div class="sensor-chip active" data-sensor="KOSI_RIVER_NODE_04">
+                        <div class="chip-id">KOSI_NODE_04</div>
+                        <div class="chip-lvl" id="chip-lvl-kosi">12.45 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="GANDAK_VALMIKI_02">
+                        <div class="chip-id">GANDAK_02</div>
+                        <div class="chip-lvl" id="chip-lvl-gandak">13.80 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="SON_BARRAGE_08">
+                        <div class="chip-id">SON_BARRAGE_08</div>
+                        <div class="chip-lvl" id="chip-lvl-son">9.60 m</div>
+                    </div>
+                    <div class="sensor-chip" data-sensor="BAGMATI_NODE_01">
+                        <div class="chip-id">BAGMATI_01</div>
+                        <div class="chip-lvl" id="chip-lvl-bagmati">11.20 m</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Telemetry Metrics Grid -->
+            <div class="panel-block">
+                <div class="block-title">
+                    <span>IoT Telemetry Stream</span>
+                    <span id="telemetry-timestamp" style="font-family: var(--font-mono); font-size: 0.68rem;">--:--:--</span>
+                </div>
+                
+                <div class="metrics-grid-4">
+                    <div class="stat-card">
+                        <div class="stat-card-label">Water Level</div>
+                        <div class="stat-card-val" id="stat-water" style="color: var(--accent-cyan);">12.45 m</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Flow Rate</div>
+                        <div class="stat-card-val" id="stat-flow">490.0 m³/s</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Rain Intensity</div>
+                        <div class="stat-card-val" id="stat-rain">34.2 mm/h</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">Node Battery</div>
+                        <div class="stat-card-val" id="stat-battery" style="color: var(--accent-green);">98.5 %</div>
+                    </div>
+                </div>
+
+                <!-- Water Level Trend Canvas Chart -->
+                <div style="margin-top: 14px;">
+                    <div class="stat-card-label" style="margin-bottom: 6px;">Water Level Trend vs Historic Peak</div>
+                    <canvas id="chart-canvas" width="360" height="95" style="width: 100%; height: 95px; background: #04070e; border-radius: 8px; border: 1px solid var(--border-subtle);"></canvas>
+                </div>
+            </div>
+
+            <!-- Simulation & Emergency Action Controls -->
+            <div class="panel-block">
+                <div class="block-title">Disaster Simulation Actions</div>
+                <div class="controls-stack">
+                    <button class="btn btn-danger" id="btn-simulate-surge">
+                        🌊 Trigger Rapid River Surge (15.5m Breach)
+                    </button>
+                    
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn" id="btn-ble-ping" style="flex: 1;">
+                            📱 Send BLE SOS Ping
+                        </button>
+                        <button class="btn btn-green" id="btn-dispatch-boat" style="flex: 1;">
+                            🚤 Dispatch Boat Squad
+                        </button>
+                    </div>
+
+                    <button class="btn" id="btn-reset-system" style="background: rgba(255,255,255,0.04);">
+                        🔄 Reset Baseline Telemetry
+                    </button>
+                </div>
+            </div>
+
+            <!-- Real-time Audit Log Ticker -->
+            <div class="panel-block" style="flex: 1; border-bottom: none;">
+                <div class="block-title">Sub-Second Audit Log</div>
+                <div class="log-stream" id="log-stream">
+                    <div class="log-item info">[INIT] Enterprise NDRF Command Center portal initialized. Connected to WebSockets broker.</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- MAIN VIEW 2: Sensor Fleet & Matrix -->
+    <main class="app-view" id="view-sensors">
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <div>
+                    <h2>Basin Telemetry Sensor Fleet Management</h2>
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">
+                        Real-time status of deployed ultrasonic water level sensors, telemetry flow meters, and signal metrics across all river basins.
+                    </p>
+                </div>
+                <button class="btn btn-cyan" id="btn-export-csv">📥 Export CSV Telemetry Report</button>
+            </div>
+
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Sensor ID</th>
+                        <th>River Basin</th>
+                        <th>Latitude / Longitude</th>
+                        <th>Water Level</th>
+                        <th>Critical Threshold</th>
+                        <th>Flow Rate</th>
+                        <th>Rainfall</th>
+                        <th>Battery %</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="sensor-table-body">
+                    <!-- Dynamic Rows populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- MAIN VIEW 3: BLE Mesh P2P Network Topology -->
+    <main class="app-view" id="view-mesh">
+        <div class="mesh-canvas-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 style="font-family: var(--font-heading); font-size: 1.15rem;">Offline BLE Mesh P2P Network Graph Visualizer</h2>
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">
+                        Simulates multi-hop peer-to-peer 16-byte compressed binary frame routing when cellular towers fail.
+                    </p>
+                </div>
+                <button class="btn btn-cyan" id="btn-sim-mesh-packet">📡 Relay Sample Mesh Packet</button>
+            </div>
+
+            <canvas class="mesh-topology-canvas" id="mesh-canvas" width="700" height="480"></canvas>
+        </div>
+
+        <aside class="sidebar-console" style="border-radius: 14px; border: 1px solid var(--border-subtle);">
+            <div class="sidebar-title-bar">
+                <h3>BLE Mesh Metrics</h3>
+            </div>
+            <div class="panel-block">
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">Active Mesh Nodes</div>
+                    <div class="stat-card-val" style="color: var(--accent-purple);" id="mesh-nodes-count">8 Nodes</div>
+                </div>
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">P2P Payload Frame Size</div>
+                    <div class="stat-card-val">16 Bytes (Packed)</div>
+                </div>
+                <div class="stat-card" style="margin-bottom: 10px;">
+                    <div class="stat-card-label">Average Hop Count</div>
+                    <div class="stat-card-val" id="mesh-hop-count">2 Hops</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-label">Gateway Cloud Uplink</div>
+                    <div class="stat-card-val" style="color: var(--accent-green);">Satellite Active</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- MAIN VIEW 4: Rescue Squads & Shelters -->
+    <main class="app-view" id="view-rescue">
+        <!-- Left: Rescue Teams Roster -->
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <h2>NDRF Tactical Rescue Units</h2>
+                <button class="btn btn-green" id="btn-dispatch-new-unit">➕ Dispatch New Unit</button>
+            </div>
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Unit ID</th>
+                        <th>Type</th>
+                        <th>Assigned Sector</th>
+                        <th>Personnel</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="rescue-table-body">
+                    <tr>
+                        <td>NDRF-BOAT-01</td>
+                        <td>Speedboat Squad</td>
+                        <td>Supaul / Kosi Sector</td>
+                        <td>6 Officers</td>
+                        <td><span class="status-tag normal">ON SCENE</span></td>
+                    </tr>
+                    <tr>
+                        <td>NDRF-HELI-04</td>
+                        <td>Heavy Lift Helicopter</td>
+                        <td>Valmiki Sector</td>
+                        <td>4 Crew</td>
+                        <td><span class="status-tag normal">STANDBY</span></td>
+                    </tr>
+                    <tr>
+                        <td>NDRF-DRONE-09</td>
+                        <td>Recon & Supply Drone</td>
+                        <td>Sitamarhi Sector</td>
+                        <td>2 Operators</td>
+                        <td><span class="status-tag warning">PATROLLING</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Right: Evacuation Relief Camps -->
+        <div class="data-table-card">
+            <div class="table-header-flex">
+                <h2>Evacuation Relief Camps Capacity</h2>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 16px;" id="shelters-container">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Cell Broadcast Compose Modal -->
+    <div class="modal-overlay" id="broadcast-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>📢 Cell Broadcast Mass Alert Composer (CAP v1.2)</h3>
+                <button class="btn" id="btn-close-modal" style="padding: 4px 10px;">✕</button>
+            </div>
+
+            <div class="form-group">
+                <label>Target Geo-Fence Radius</label>
+                <select class="form-control" id="modal-radius">
+                    <option value="5">5 km Radius (Supaul Sector)</option>
+                    <option value="15" selected>15 km Radius (Whole Kosi River Basin)</option>
+                    <option value="50">50 km Regional Broadcast</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Alert Severity Level</label>
+                <select class="form-control" id="modal-severity">
+                    <option value="EXTREME" selected>EXTREME DANGER - IMMEDIATE EVACUATION</option>
+                    <option value="SEVERE">SEVERE WARNING - HIGH WATER LEVEL</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Broadcast Emergency Message</label>
+                <textarea class="form-control" id="modal-msg" rows="3">EMERGENCY FLOOD WARNING: Kosi River level breached 15.0m threshold! Move to designated high-ground relief camps immediately. NDRF teams dispatched.</textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                <button class="btn" id="btn-cancel-modal">Cancel</button>
+                <button class="btn btn-danger" id="btn-send-broadcast">🚀 Send Cell Broadcast Alert (< 1s)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App JavaScript Logic -->
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "disaster-alert-system",
+  "version": "2.0.0",
+  "description": "Automated Ultra-Low Latency Disaster Alert & Rescue System with IoT, Fast WebSockets & BLE Mesh Fallback",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  },
+  "license": "MIT"
+}
