@@ -135,7 +135,10 @@ let isBreached = false;
 let soundEnabled = true;
 let ws = null;
 let map = null;
-let markersGroup = null;
+let G = {};                    // Google Maps classes (filled after the API loads)
+let sensorMarkers = [];
+let sosMarkers = [];
+let infoWindow = null;
 let routePolyline = null;
 let currentRole = 'ndrf';
 
@@ -258,7 +261,7 @@ function switchRole(role) {
         btnRoleNdrf.classList.add('active');
         ndrfTabsNav.style.display = 'flex';
         document.getElementById('view-map').classList.add('active');
-        setTimeout(() => map && map.invalidateSize(), 200);
+        setTimeout(refreshMap, 200);
     } else if (role === 'victim') {
         btnRoleVictim.classList.add('active');
         ndrfTabsNav.style.display = 'none';
@@ -298,59 +301,313 @@ function updateUIWithLang(lang) {
     document.getElementById('step-3').innerHTML = `<strong>3. Peer Mesh Transmission:</strong> ${dict.step3}`;
 }
 
-// GIS Map Initialization
-function initGISMap() {
-    const kosiCoords = BASIN_SENSORS["KOSI_RIVER_NODE_04"].coords;
-    map = L.map('map', { zoomControl: false }).setView(kosiCoords, 10);
-    
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CartoDB & OpenStreetMap',
-        maxZoom: 19
-    }).addTo(map);
+// ---------------------------------------------------------------------------
+// Google Maps
+// ---------------------------------------------------------------------------
+const GOOGLE_MAPS_API_KEY = 'AIzaSyCL8xD_zD1lzU-J0U7PZKI4VSa93hlcZgA';
+const GOOGLE_MAPS_MAP_ID = 'DEMO_MAP_ID';
+const DARK_LAYER_ID = 'layer-dark';
+const SAT_LAYER_ID = 'layer-satellite';
 
-    markersGroup = L.layerGroup().addTo(map);
+function showMapMessage(html) {
+    const el = document.getElementById('map');
+    if (el) el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--text-secondary);font-size:0.9rem;line-height:1.6;">${html}</div>`;
+}
 
-    // Plot Sensor Stations
-    Object.values(BASIN_SENSORS).forEach(sensor => {
-        const sensorIcon = L.divIcon({
-            className: 'custom-sensor-marker',
-            html: `<div style="background: var(--accent-cyan); width: 14px; height: 14px; border-radius: 50%; border: 3px solid #ffffff; box-shadow: 0 0 12px var(--accent-cyan);"></div>`,
-            iconSize: [20, 20]
-        });
+// Google calls this global if the key is invalid / restricted / billing is off
+window.gm_authFailure = () => {
+    showMapMessage('<div><b style="color:#ff3b30;">Google Maps authentication failed.</b><br>Check your API key, its HTTP-referrer restrictions, and that the <i>Maps JavaScript API</i> is enabled with billing on.</div>');
+};
 
-        L.marker(sensor.coords, { icon: sensorIcon })
-            .addTo(map)
-            .bindPopup(`<b>${sensor.name}</b><br>${sensor.location}<br>Water Level: ${sensor.water_level} m`);
+function loadGoogleMapsScript(apiKey) {
+    return new Promise((resolve, reject) => {
+        if (window.google && google.maps) return resolve();
+        window.__gmapsLoaded = resolve;
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&loading=async&callback=__gmapsLoaded`;
+        script.async = true;
+        script.onerror = () => reject(new Error('Could not load the Google Maps script (network or ad-blocker?).'));
+        document.head.appendChild(script);
     });
+}
 
-    // Plot Victim SOS Markers
-    plotVictimSOSMarkers();
+async function initGISMap() {
+    try {
+        const cfg = await fetch('/api/config')
+            .then(r => r.ok ? r.json() : null)
+            .catch(() => null) || {
+                googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+                googleMapId: GOOGLE_MAPS_MAP_ID
+            };
+
+        if (!cfg.googleMapsApiKey) {
+            showMapMessage('<div><b>Google Maps API key not set.</b><br>Add <code>GOOGLE_MAPS_API_KEY=your_key</code> to the <code>.env</code> file and restart the server.</div>');
+            return;
+        }
+
+        await loadGoogleMapsScript(cfg.googleMapsApiKey);
+        const { Map, InfoWindow, Polyline } = await google.maps.importLibrary('maps');
+        const { AdvancedMarkerElement } = await google.maps.importLibrary('marker');
+        const { LatLngBounds, ColorScheme } = await google.maps.importLibrary('core');
+        G = { Map, InfoWindow, Polyline, AdvancedMarkerElement, LatLngBounds };
+
+        const kosiCoords = BASIN_SENSORS["KOSI_RIVER_NODE_04"].coords;
+        map = new Map(document.getElementById('map'), {
+            center: { lat: kosiCoords[0], lng: kosiCoords[1] },
+            zoom: 10,
+            mapId: cfg.googleMapId || 'DEMO_MAP_ID',   // required for Advanced Markers
+            colorScheme: ColorScheme.DARK,              // dark theme (vector maps)
+            disableDefaultUI: true,
+            zoomControl: true,
+            fullscreenControl: false
+        });
+        infoWindow = new InfoWindow();
+
+        // Plot Sensor Stations
+        Object.values(BASIN_SENSORS).forEach(addSensorMarker);
+
+        initLayerSwitcher();
+        plotVictimSOSMarkers();
+    } catch (err) {
+        console.error('[Google Maps]', err);
+        showMapMessage(`<div><b style="color:#ff3b30;">Map failed to load.</b><br>${err.message}</div>`);
+    }
+}
+
+function addSensorMarker(sensor) {
+    if (!map || !G.AdvancedMarkerElement) return;
+    const pin = document.createElement('div');
+    pin.style.cssText = 'background: var(--accent-cyan); width: 14px; height: 14px; border-radius: 50%; border: 3px solid #ffffff; box-shadow: 0 0 12px var(--accent-cyan);';
+
+    const marker = new G.AdvancedMarkerElement({
+        map,
+        position: { lat: sensor.coords[0], lng: sensor.coords[1] },
+        content: pin,
+        title: sensor.name
+    });
+    marker.addListener('click', () => {
+        // Read the sensor at click time so the popup always shows the latest level
+        infoWindow.setContent(`<div style="color:#000;"><b>${sensor.name}</b><br>${sensor.location}<br>Water Level: ${sensor.water_level} m</div>`);
+        infoWindow.open({ map, anchor: marker });
+    });
+    sensorMarkers.push(marker);
+}
+
+// Trigger a redraw after the map container was hidden/shown (tab or role switch)
+function refreshMap() {
+    if (map && window.google) google.maps.event.trigger(map, 'resize');
+}
+
+// ---------------------------------------------------------------------------
+// Layer switcher
+//   Dark GIS / Satellite  -> mutually exclusive base maps
+//   Rain Radar / Flood    -> independent overlays you can toggle on top
+// ---------------------------------------------------------------------------
+function initLayerSwitcher() {
+    const setBase = (mapType, activeId) => {
+        map.setMapTypeId(mapType);
+        [DARK_LAYER_ID, SAT_LAYER_ID].forEach(b => document.getElementById(b)?.classList.toggle('active', b === activeId));
+    };
+    document.getElementById(DARK_LAYER_ID)?.addEventListener('click', () => setBase('roadmap', DARK_LAYER_ID));
+    document.getElementById(SAT_LAYER_ID)?.addEventListener('click', () => setBase('hybrid', SAT_LAYER_ID));
+    document.getElementById('layer-rain')?.addEventListener('click', (e) => toggleRainRadar(e.currentTarget));
+    document.getElementById('layer-heat')?.addEventListener('click', (e) => toggleFloodZones(e.currentTarget));
+}
+
+// Legend box (top-right of the map) describing whichever overlays are on
+function updateMapLegend() {
+    const container = document.querySelector('.map-container');
+    if (!container) return;
+    let el = document.getElementById('map-legend');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'map-legend';
+        el.className = 'map-legend';
+        container.appendChild(el);
+    }
+
+    let html = '';
+    if (rain.on) {
+        html += `<div class="legend-block">
+            <div class="legend-title">🌧️ Rain Radar</div>
+            <div class="legend-gradient"></div>
+            <div class="legend-scale"><span>Light</span><span>Heavy</span></div>
+            <div class="legend-note">${rain.status || 'Loading…'}<br>Data: RainViewer</div>
+        </div>`;
+    }
+    if (flood.on) {
+        html += `<div class="legend-block">
+            <div class="legend-title">🔴 Flood Risk Zones</div>
+            <div class="legend-row"><i style="background:${FLOOD_COLORS.breach}"></i> Danger level breached</div>
+            <div class="legend-row"><i style="background:${FLOOD_COLORS.warn}"></i> Within 10% of danger level</div>
+            <div class="legend-row"><i style="background:${FLOOD_COLORS.ok}"></i> Normal</div>
+            <div class="legend-note">Estimated from sensor level ÷ danger threshold. Illustrative only, not a hydrological model.</div>
+        </div>`;
+    }
+    el.innerHTML = html;
+    el.style.display = html ? 'block' : 'none';
+}
+
+// ----- Rain Radar (RainViewer tiles on a Google custom map type) -----
+// RainViewer's free tier serves tiles only up to zoom 7, so at higher zooms we
+// fetch the zoom-7 parent tile and scale/crop it (the radar is coarse anyway).
+const RAIN_MAX_NATIVE_ZOOM = 7;
+const RAIN_MAX_ZOOM = 12;
+const RAIN_REFRESH_MS = 5 * 60 * 1000;
+const rain = { on: false, mapType: null, timer: null, status: '' };
+
+async function fetchLatestRainFrame() {
+    const data = await fetch('https://api.rainviewer.com/public/weather-maps.json').then(r => {
+        if (!r.ok) throw new Error(`RainViewer HTTP ${r.status}`);
+        return r.json();
+    });
+    const past = (data.radar && data.radar.past) || [];
+    if (!past.length) throw new Error('No radar frames available');
+    const latest = past[past.length - 1];
+    return { host: data.host, path: latest.path, time: latest.time };
+}
+
+function buildRainMapType(frame) {
+    return {
+        tileSize: new google.maps.Size(256, 256),
+        minZoom: 0,
+        maxZoom: RAIN_MAX_ZOOM,
+        name: 'Rain Radar',
+        getTile(coord, zoom, doc) {
+            const div = doc.createElement('div');
+            div.style.cssText = 'width:256px;height:256px;overflow:hidden;position:relative;pointer-events:none;';
+            const n = 1 << zoom;
+            if (coord.y < 0 || coord.y >= n) return div;          // outside the world vertically
+            const x = ((coord.x % n) + n) % n;                    // wrap horizontally
+
+            const shift = Math.max(0, zoom - RAIN_MAX_NATIVE_ZOOM);
+            const scale = 1 << shift;
+            const z = zoom - shift;
+
+            const img = doc.createElement('img');
+            img.src = `${frame.host}${frame.path}/256/${z}/${x >> shift}/${coord.y >> shift}/2/1_1.png`;
+            img.style.cssText = `position:absolute;opacity:0.7;width:${256 * scale}px;height:${256 * scale}px;left:${-(x & (scale - 1)) * 256}px;top:${-(coord.y & (scale - 1)) * 256}px;`;
+            img.onerror = () => { img.style.display = 'none'; };
+            div.appendChild(img);
+            return div;
+        },
+        releaseTile() {}
+    };
+}
+
+async function applyRainFrame() {
+    try {
+        const frame = await fetchLatestRainFrame();
+        const overlays = map.overlayMapTypes;
+        if (rain.mapType) {
+            const idx = overlays.getArray().indexOf(rain.mapType);
+            if (idx > -1) overlays.removeAt(idx);
+        }
+        rain.mapType = buildRainMapType(frame);
+        overlays.push(rain.mapType);
+        rain.status = 'Radar time: ' + new Date(frame.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        logAudit(`[RAIN RADAR] Layer updated (${rain.status}).`);
+    } catch (err) {
+        console.error('[Rain Radar]', err);
+        rain.status = '⚠ Radar feed unavailable';
+    }
+    updateMapLegend();
+}
+
+function stopRainRadar() {
+    clearInterval(rain.timer);
+    rain.timer = null;
+    if (rain.mapType && map) {
+        const idx = map.overlayMapTypes.getArray().indexOf(rain.mapType);
+        if (idx > -1) map.overlayMapTypes.removeAt(idx);
+    }
+    rain.mapType = null;
+}
+
+async function toggleRainRadar(btn) {
+    if (!map) return;
+    rain.on = !rain.on;
+    btn.classList.toggle('active', rain.on);
+    if (rain.on) {
+        rain.status = 'Loading…';
+        updateMapLegend();
+        await applyRainFrame();
+        rain.timer = setInterval(applyRainFrame, RAIN_REFRESH_MS);
+    } else {
+        stopRainRadar();
+        updateMapLegend();
+    }
+}
+
+// ----- Flood Inundation (risk circles derived from sensor water levels) -----
+const FLOOD_COLORS = { breach: '#ff3b30', warn: '#ff9500', ok: '#34c759' };
+const flood = { on: false, circles: {} };
+
+function floodStyleFor(sensor) {
+    const ratio = sensor.water_level / sensor.threshold;
+    const color = ratio >= 1 ? FLOOD_COLORS.breach : ratio >= 0.9 ? FLOOD_COLORS.warn : FLOOD_COLORS.ok;
+    const radius = 2000 + Math.max(0, ratio - 0.7) * 30000;   // metres: grows as the level nears/exceeds danger
+    return { color, radius };
+}
+
+function refreshFloodZones() {
+    if (!map || !flood.on) return;
+    Object.values(BASIN_SENSORS).forEach(sensor => {
+        const { color, radius } = floodStyleFor(sensor);
+        const center = { lat: sensor.coords[0], lng: sensor.coords[1] };
+        let circle = flood.circles[sensor.id];
+        if (!circle) {
+            circle = new google.maps.Circle({ map, clickable: false, strokeWeight: 2, fillOpacity: 0.25, strokeOpacity: 0.85 });
+            flood.circles[sensor.id] = circle;
+        }
+        circle.setOptions({ center, radius, strokeColor: color, fillColor: color });
+        circle.setMap(map);
+    });
+}
+
+function toggleFloodZones(btn) {
+    if (!map) return;
+    flood.on = !flood.on;
+    btn.classList.toggle('active', flood.on);
+    if (flood.on) {
+        refreshFloodZones();
+    } else {
+        Object.values(flood.circles).forEach(c => c.setMap(null));
+    }
+    updateMapLegend();
 }
 
 function plotVictimSOSMarkers() {
     if (!map) return;
-    
+
     // Clear dynamic SOS markers
-    markersGroup.clearLayers();
+    sosMarkers.forEach(m => { m.map = null; });
+    sosMarkers = [];
 
     sosIncidents.forEach(sos => {
         const color = sos.status === 'CRITICAL_RED' ? '#ff3b30' : '#ffcc00';
-        const sosIcon = L.divIcon({
-            className: 'sos-marker-pin',
-            html: `<div style="background: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 3px solid #ffffff; animation: pulse 1s infinite; box-shadow: 0 0 18px ${color};"></div>`,
-            iconSize: [24, 24]
-        });
+        const pin = document.createElement('div');
+        pin.style.cssText = `background: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 3px solid #ffffff; animation: pulse 1s infinite; box-shadow: 0 0 18px ${color};`;
 
-        const marker = L.marker([sos.lat, sos.lng], { icon: sosIcon }).addTo(markersGroup);
-        marker.bindPopup(`
-            <div style="color: #000;">
-                <b style="color: #ff3b30;">🚨 ${sos.id} (${sos.triage})</b><br>
-                <b>People Trapped:</b> ${sos.people}<br>
-                <b>Landmark:</b> ${sos.landmark}<br>
-                <b>Hops:</b> ${sos.hops} via Bluetooth Mesh<br>
-                <button onclick="dispatchRescueToSOS('${sos.id}')" style="background:#00f2fe; border:none; padding:4px 8px; border-radius:4px; margin-top:6px; font-weight:bold; cursor:pointer;">🚤 Dispatch Squad</button>
-            </div>
-        `);
+        const marker = new G.AdvancedMarkerElement({
+            map,
+            position: { lat: sos.lat, lng: sos.lng },
+            content: pin,
+            title: sos.id
+        });
+        marker.addListener('click', () => {
+            infoWindow.setContent(`
+                <div style="color: #000;">
+                    <b style="color: #ff3b30;">🚨 ${sos.id} (${sos.triage})</b><br>
+                    <b>People Trapped:</b> ${sos.people}<br>
+                    <b>Landmark:</b> ${sos.landmark}<br>
+                    <b>Hops:</b> ${sos.hops} via Bluetooth Mesh<br>
+                    <button onclick="dispatchRescueToSOS('${sos.id}')" style="background:#00f2fe; border:none; padding:4px 8px; border-radius:4px; margin-top:6px; font-weight:bold; cursor:pointer;">🚤 Dispatch Squad</button>
+                </div>
+            `);
+            infoWindow.open({ map, anchor: marker });
+        });
+        sosMarkers.push(marker);
     });
 }
 
@@ -383,18 +640,122 @@ function initWebSockets() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Backend payload -> dashboard shape
+// The Node/FastAPI backends and the Python emulators use different field names
+// than the dashboard (e.g. water_level_meters vs water_level). These helpers
+// translate them so live data updates the table, HUD, chips and map.
+// ---------------------------------------------------------------------------
+const numOr = (v, fallback) => (v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v))) ? Number(v) : fallback;
+
+function sensorStatusFor(level, threshold) {
+    const ratio = level / threshold;
+    return ratio >= 1 ? 'CRITICAL' : ratio >= 0.9 ? 'WARNING' : 'NORMAL';
+}
+
+// Merge a raw telemetry payload into BASIN_SENSORS and return the sensor (or null if unusable)
+function applyTelemetry(raw) {
+    if (!raw) return null;
+    const id = raw.id || raw.sensor_id;
+    const level = numOr(raw.water_level ?? raw.water_level_meters, NaN);
+    if (!id || !Number.isFinite(level)) return null;
+
+    let sensor = BASIN_SENSORS[id];
+    if (!sensor) {
+        const lat = numOr(raw.latitude, NaN);
+        const lng = numOr(raw.longitude, NaN);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            console.warn(`[Telemetry] Ignoring unknown sensor "${id}" (no coordinates).`);
+            return null;
+        }
+        sensor = BASIN_SENSORS[id] = {
+            id,
+            name: id.replace(/_/g, ' '),
+            location: 'Unregistered sensor',
+            coords: [lat, lng],
+            water_level: level,
+            threshold: numOr(raw.threshold ?? raw.critical_threshold, 15.0),
+            flow_rate: 0, rainfall: 0, battery: 100, status: 'NORMAL'
+        };
+        addSensorMarker(sensor);
+        logAudit(`[SENSOR] New sensor registered: ${id}`);
+    }
+
+    sensor.water_level = Number(level.toFixed(2));
+    sensor.threshold = numOr(raw.threshold ?? raw.critical_threshold, sensor.threshold);
+    sensor.flow_rate = Number(numOr(raw.flow_rate ?? raw.flow_rate_m3s, sensor.flow_rate).toFixed(1));
+    sensor.rainfall = Number(numOr(raw.rainfall ?? raw.rainfall_rate_mmhr, sensor.rainfall).toFixed(1));
+    sensor.battery = Number(numOr(raw.battery ?? raw.battery_level_pct, sensor.battery).toFixed(1));
+    sensor.status = sensorStatusFor(sensor.water_level, sensor.threshold);
+    return sensor;
+}
+
+// Accepts either the dashboard's own SOS shape or the backend/BLE-emulator shape
+function normalizeSOS(raw) {
+    if (!raw) return null;
+    if (raw.id !== undefined && raw.lat !== undefined && raw.lng !== undefined) return raw;   // already dashboard shape
+
+    const lat = numOr(raw.lat ?? raw.latitude, NaN);
+    const lng = numOr(raw.lng ?? raw.longitude, NaN);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const medical = !!raw.medical_urgency;
+    const ts = numOr(raw.timestamp, null);
+    return {
+        id: raw.id || raw.sos_id || `SOS-${Date.now()}`,
+        triage: raw.triage || (medical ? 'INJURED_MEDICAL' : 'ROOF_TRAPPED'),
+        triage_score: medical ? 95 : 70,
+        lat, lng,
+        landmark: raw.landmark || `Relayed via ${raw.mesh_protocol || 'mesh network'}`,
+        people: numOr(raw.people ?? raw.family_count, 1),
+        hops: numOr(raw.hops ?? raw.relay_hops, 0),
+        status: raw.status || (medical ? 'CRITICAL_RED' : 'URGENT_YELLOW'),
+        timestamp: (ts ? new Date(ts * 1000) : new Date()).toLocaleTimeString()
+    };
+}
+
+// Adds an incoming SOS unless we already have it (the sender's own dashboard gets its SOS echoed back)
+function addIncomingSOS(rawSos) {
+    const sos = normalizeSOS(rawSos);
+    if (!sos || sosIncidents.some(s => s.id === sos.id)) return null;
+    sosIncidents.unshift(sos);
+    return sos;
+}
+
+const liveBreachedSensors = new Set();
+
 function handleIncomingWSMessage(msg) {
-    if (msg.type === 'TELEMETRY_UPDATE') {
-        updateSensorTelemetryUI(msg.sensor);
+    if (msg.type === 'INITIAL_STATE_SYNC') {
+        // FastAPI sends current state on connect (Node sends only a timestamp)
+        (msg.sensors || []).forEach(raw => { const s = applyTelemetry(raw); if (s) updateSensorTelemetryUI(s); });
+        const added = (msg.sos_signals || []).map(addIncomingSOS).filter(Boolean);
+        if (added.length) { renderTriageTable(); plotVictimSOSMarkers(); }
+    } else if (msg.type === 'TELEMETRY_UPDATE') {
+        const sensor = applyTelemetry(msg.sensor);
+        if (!sensor) return;
+        updateSensorTelemetryUI(sensor);
+
+        const breached = msg.is_breached === true || sensor.water_level >= sensor.threshold;
+        if (breached && !liveBreachedSensors.has(sensor.id)) {
+            // Fire the alarm once per breach, not on every reading while above the threshold
+            liveBreachedSensors.add(sensor.id);
+            alertBanner.style.display = 'block';
+            triggerAlarmSiren();
+            logAudit(`🌊 EMERGENCY: ${sensor.name} reached ${sensor.water_level} m (danger limit ${sensor.threshold} m)!`, true);
+        } else if (!breached && liveBreachedSensors.delete(sensor.id)) {
+            logAudit(`[RECOVERY] ${sensor.name} fell back below ${sensor.threshold} m.`);
+            if (liveBreachedSensors.size === 0) alertBanner.style.display = 'none';
+        }
     } else if (msg.type === 'CITIZEN_SOS_ALERT') {
-        const newSos = msg.sos;
-        sosIncidents.unshift(newSos);
+        const newSos = addIncomingSOS(msg.sos);
+        if (!newSos) return;
         renderTriageTable();
         plotVictimSOSMarkers();
         logAudit(`[SOS RECEIVED] New distress call ${newSos.id} from ${newSos.landmark || 'Victim GPS'}`, true);
         triggerAlarmSiren();
     } else if (msg.type === 'RESCUE_DISPATCHED') {
-        logAudit(`[DISPATCH] NDRF Speedboat dispatched to ${msg.dispatch.sos_id}`);
+        const d = msg.dispatch || {};
+        logAudit(`[DISPATCH] NDRF Speedboat dispatched to ${d.sos_id || d.assigned_sos_id || 'incident'}`);
     }
 }
 
@@ -475,17 +836,31 @@ window.dispatchRescueToSOS = function(sosId) {
     const sos = sosIncidents.find(s => s.id === sosId);
     if (!sos) return;
 
-    // Draw route line on Leaflet map from nearest boat
+    // Draw route line on the map from nearest boat
     const boatCoords = [25.5990, 85.1450]; // Supaul Boat Squad
-    if (routePolyline) map.removeLayer(routePolyline);
+    if (map) {
+        if (routePolyline) routePolyline.setMap(null);
+        if (infoWindow) infoWindow.close();
 
-    routePolyline = L.polyline([boatCoords, [sos.lat, sos.lng]], {
-        color: '#00f2fe',
-        weight: 4,
-        dashArray: '8, 8'
-    }).addTo(map);
+        const path = [
+            { lat: boatCoords[0], lng: boatCoords[1] },
+            { lat: sos.lat, lng: sos.lng }
+        ];
+        routePolyline = new G.Polyline({
+            path,
+            strokeOpacity: 0,                       // dashed line via repeating icons
+            icons: [{
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: '#00f2fe', strokeWeight: 4, scale: 3 },
+                offset: '0',
+                repeat: '16px'
+            }],
+            map
+        });
 
-    map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+        const bounds = new G.LatLngBounds();
+        path.forEach(p => bounds.extend(p));
+        map.fitBounds(bounds, 50);
+    }
 
     sos.status = 'RESCUE_DISPATCHED';
     renderTriageTable();
@@ -725,7 +1100,7 @@ function initEventListeners() {
             e.currentTarget.classList.add('active');
             const targetId = e.currentTarget.getAttribute('data-target');
             document.getElementById(targetId).classList.add('active');
-            if (targetId === 'view-map' && map) setTimeout(() => map.invalidateSize(), 200);
+            if (targetId === 'view-map' && map) setTimeout(refreshMap, 200);
         });
     });
 
@@ -734,6 +1109,7 @@ function initEventListeners() {
     btnWhistle.addEventListener('click', toggleWhistle);
     btnFlashlight.addEventListener('click', toggleFlashlight);
     btnPairBle.addEventListener('click', initBluetoothMesh);
+    document.querySelectorAll('.sensor-chip').forEach(chip => chip.addEventListener('click', () => selectSensor(chip.dataset.sensor)));
 
     btnSimulateSurge.addEventListener('click', () => {
         BASIN_SENSORS["KOSI_RIVER_NODE_04"].water_level = 15.65;
@@ -766,14 +1142,39 @@ function initEventListeners() {
     }
 }
 
-function updateSensorTelemetryUI(sensor) {
+function renderActiveSensorPanel(sensor) {
     if (statWater) statWater.innerText = `${sensor.water_level} m`;
     if (statFlow) statFlow.innerText = `${sensor.flow_rate} m³/s`;
     if (statRain) statRain.innerText = `${sensor.rainfall} mm/h`;
     if (statBattery) statBattery.innerText = `${sensor.battery} %`;
     if (hudWaterVal) hudWaterVal.innerText = `${sensor.water_level} m`;
+    if (hudNodeName) hudNodeName.innerText = sensor.id;
+    if (hudNodeLocation) hudNodeLocation.innerText = `Location: ${sensor.location}`;
+    const hudThreshold = document.getElementById('hud-threshold');
+    if (hudThreshold) hudThreshold.innerText = `Danger Threshold: ${Number(sensor.threshold).toFixed(2)} m`;
+}
+
+function updateSensorTelemetryUI(sensor) {
+    // Chip in the basin selector always reflects the latest level
+    const chipLvl = document.querySelector(`.sensor-chip[data-sensor="${sensor.id}"] .chip-lvl`);
+    if (chipLvl) chipLvl.innerText = `${sensor.water_level} m`;
+
+    // The big stats panel / HUD only follow the sensor selected in the basin selector
+    if (sensor.id === activeSensorId) renderActiveSensorPanel(sensor);
+
     if (telemetryTimestamp) telemetryTimestamp.innerText = new Date().toLocaleTimeString();
     renderSensorTable();
+    refreshFloodZones();
+}
+
+// Basin selector: choose which station the stats panel and HUD show
+function selectSensor(id) {
+    const sensor = BASIN_SENSORS[id];
+    if (!sensor) return;
+    activeSensorId = id;
+    document.querySelectorAll('.sensor-chip').forEach(c => c.classList.toggle('active', c.dataset.sensor === id));
+    renderActiveSensorPanel(sensor);
+    if (map) map.panTo({ lat: sensor.coords[0], lng: sensor.coords[1] });
 }
 
 // Government Situation Report CSV Export

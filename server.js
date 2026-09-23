@@ -6,10 +6,19 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const GOOGLE_MAPS_API_KEY = 'AIzaSyCL8xD_zD1lzU-J0U7PZKI4VSa93hlcZgA';
+const GOOGLE_MAPS_MAP_ID = 'DEMO_MAP_ID';
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
+
+app.get('/api/config', (req, res) => {
+    res.json({
+        googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+        googleMapId: GOOGLE_MAPS_MAP_ID
+    });
+});
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws/ndrf-control' });
